@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wibecord</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="app">
+    <!-- Авторизация -->
+    <div id="auth-container" class="auth-container">
+        <div class="auth-bg"></div>
+        <div class="auth-box">
+            <div class="auth-logo">
+                <svg width="124" height="34" viewBox="0 0 124 34" fill="none">
+                    <text x="0" y="28" fill="#fff" font-size="28" font-weight="700" font-family="Noto Sans">Wibecord</text>
+                </svg>
+            </div>
+            <p class="auth-subtitle" id="auth-subtitle">Рады видеть снова!</p>
+
+            <div id="auth-tabs" class="auth-tabs">
+                <button class="tab active" data-tab="login">Войти</button>
+                <button class="tab" data-tab="register">Регистрация</button>
+            </div>
+
+            <form id="login-form" class="auth-form">
+                <label>ИМЯ ПОЛЬЗОВАТЕЛЯ ИЛИ EMAIL</label>
+                <input type="text" id="login-username" placeholder="username" required autocomplete="username">
+                <label>ПАРОЛЬ</label>
+                <input type="password" id="login-password" placeholder="Пароль" required autocomplete="current-password">
+                <button type="submit" class="btn-primary">Войти</button>
+                <p id="login-error" class="error-msg"></p>
+                <p class="auth-switch">Нужен аккаунт? <span class="link switch-to-register">Зарегистрироваться</span></p>
+            </form>
+
+            <form id="register-form" class="auth-form hidden">
+                <label>EMAIL <span class="optional">(необязательно)</span></label>
+                <input type="email" id="reg-email" placeholder="email@example.com" autocomplete="email">
+                <label>ИМЯ ПОЛЬЗОВАТЕЛЯ</label>
+                <input type="text" id="reg-username" placeholder="username" required autocomplete="username">
+                <label>ПАРОЛЬ</label>
+                <input type="password" id="reg-password" placeholder="Пароль" required autocomplete="new-password">
+                <label>ПОДТВЕРДИТЕ ПАРОЛЬ</label>
+                <input type="password" id="reg-password-confirm" placeholder="Повторите пароль" required autocomplete="new-password">
+                <button type="submit" class="btn-primary">Продолжить</button>
+                <p id="register-error" class="error-msg"></p>
+                <p class="auth-switch">Уже есть аккаунт? <span class="link switch-to-login">Войти</span></p>
+            </form>
+        </div>
+    </div>
+
+    <!-- Основное приложение -->
+    <div id="main-app" class="main-app hidden">
+        <!-- Панель серверов -->
+        <nav class="server-rail" id="server-rail">
+            <button id="home-btn" class="server-icon home-icon active" title="Личные сообщения">
+                <svg viewBox="0 0 28 20"><path fill="currentColor" d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
+                <span class="server-pill"></span>
+            </button>
+            <div class="server-divider"></div>
+            <div id="server-list" class="server-list"></div>
+            <button id="server-add-btn" class="server-icon add-server" title="Добавить сервер">
+                <span class="icon-wrap" style="width:24px;height:24px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
+            </button>
+        </nav>
+
+        <!-- Боковая панель -->
+        <aside class="channel-panel" id="channel-panel">
+            <!-- Режим ЛС -->
+            <div id="dm-panel" class="panel-view">
+                <header class="channel-panel-header">
+                    <h2>Личные сообщения</h2>
+                    <button id="new-dm-btn" class="icon-btn" title="Написать пользователю"></button>
+                </header>
+                <div class="dm-search-wrap">
+                    <span class="search-icon"></span>
+                    <input type="text" id="dm-search" placeholder="Найти беседу">
+                </div>
+                <nav id="dm-list" class="dm-list"></nav>
+            </div>
+
+            <!-- Режим сервера -->
+            <div id="server-panel" class="panel-view hidden">
+                <header class="channel-panel-header">
+                    <h2 id="server-name">Мой сервер</h2>
+                    <button id="server-settings-btn" class="icon-btn" title="Настройки сервера"></button>
+                </header>
+                <div class="channel-scroll">
+                    <div class="channel-category">
+                        <div class="category-header">
+                            <span>ТЕКСТОВЫЕ КАНАЛЫ</span>
+                            <button id="channel-add-btn" class="icon-btn small" title="Создать канал"></button>
+                        </div>
+                        <nav id="channel-list" class="channel-list"></nav>
+                    </div>
+                    <div class="channel-category">
+                        <div class="category-header">
+                            <span>ГОЛОСОВЫЕ КАНАЛЫ</span>
+                            <button id="voice-add-btn" class="icon-btn small" title="Создать голосовой канал"></button>
+                        </div>
+                        <nav id="voice-list" class="channel-list"></nav>
+                    </div>
+                </div>
+            </div>
+
+            <footer class="user-panel">
+                <div class="user-panel-info" id="user-panel-info">
+                    <div class="avatar-wrap">
+                        <img id="user-avatar" src="" alt="Avatar">
+                        <span id="user-status-dot" class="status-dot online"></span>
+                    </div>
+                    <div class="user-panel-text">
+                        <span id="username-display">User</span>
+                        <span id="user-tag" class="user-tag">#0000</span>
+                    </div>
+                </div>
+                <div class="user-panel-actions">
+                    <button id="user-status-btn" class="icon-btn" title="Статус"></button>
+                    <button id="user-settings-btn" class="icon-btn" title="Настройки"></button>
+                    <button id="logout-btn" class="icon-btn" title="Выйти"></button>
+                </div>
+            </footer>
+        </aside>
+
+        <!-- Чат -->
+        <main class="chat-panel">
+            <header class="chat-header">
+                <div class="chat-header-left">
+                    <span id="chat-header-icon" class="chat-header-icon"></span>
+                    <h1 id="channel-name">general</h1>
+                    <span id="dm-status-label" class="dm-status-label hidden"></span>
+                </div>
+                <div class="chat-header-actions">
+                    <button id="pin-btn" class="header-btn" title="Закреплённые"></button>
+                    <button id="members-toggle" class="header-btn" title="Участники"></button>
+                    <div class="header-search-wrap">
+                        <input type="text" id="message-search" class="header-search" placeholder="Поиск">
+                    </div>
+                </div>
+            </header>
+
+            <div class="chat-messages" id="chat-messages">
+                <div class="welcome-message" id="welcome-message">
+                    <div class="welcome-icon" id="welcome-icon"></div>
+                    <h2 id="welcome-title">Добро пожаловать в <span id="welcome-channel">general</span>!</h2>
+                    <p id="welcome-desc">Это начало канала <strong id="welcome-channel-2">#general</strong>.</p>
+                </div>
+            </div>
+
+            <form id="message-form" class="message-form">
+                <button type="button" id="attach-btn" class="input-btn" title="Прикрепить"></button>
+                <div class="message-input-wrap">
+                    <textarea id="message-input" placeholder="Написать в #general" rows="1"></textarea>
+                </div>
+                <button type="submit" class="input-btn send-btn" title="Отправить"></button>
+            </form>
+        </main>
+
+        <!-- Список участников -->
+        <aside class="members-panel" id="members-panel">
+            <div class="members-section">
+                <h3>УЧАСТНИКИ — <span id="member-count">1</span></h3>
+                <ul id="user-list" class="user-list"></ul>
+            </div>
+        </aside>
+    </div>
+</div>
+
+<!-- Модальное окно -->
+<div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal" id="modal">
+        <h3 id="modal-title">Заголовок</h3>
+        <div id="modal-body"></div>
+        <div class="modal-actions">
+            <button id="modal-cancel" class="btn-secondary">Отмена</button>
+            <button id="modal-confirm" class="btn-primary">OK</button>
+        </div>
+    </div>
+</div>
+
+<!-- Настройки -->
+<div id="settings-overlay" class="settings-overlay hidden">
+    <div class="settings-container">
+        <nav class="settings-nav">
+            <div class="settings-nav-header">
+                <h2>Настройки</h2>
+            </div>
+            <div class="settings-nav-section">
+                <span class="settings-nav-label">НАСТРОЙКИ ПОЛЬЗОВАТЕЛЯ</span>
+                <button class="settings-nav-item active" data-section="profile">
+                    <span class="nav-icon"></span> Мой профиль
+                </button>
+                <button class="settings-nav-item" data-section="appearance">
+                    <span class="nav-icon"></span> Внешний вид
+                </button>
+                <button class="settings-nav-item" data-section="privacy">
+                    <span class="nav-icon"></span> Конфиденциальность
+                </button>
+                <button class="settings-nav-item" data-section="notifications">
+                    <span class="nav-icon"></span> Уведомления
+                </button>
+            </div>
+            <div class="settings-nav-section">
+                <span class="settings-nav-label">СЕРВЕР</span>
+                <button class="settings-nav-item" data-section="server" id="settings-server-nav">
+                    <span class="nav-icon"></span> Настройки сервера
+                </button>
+            </div>
+            <div class="settings-nav-section">
+                <button class="settings-nav-item danger" data-section="logout">
+                    <span class="nav-icon"></span> Выйти
+                </button>
+            </div>
+        </nav>
+        <main class="settings-content" id="settings-content"></main>
+        <button id="settings-close" class="settings-close" title="Закрыть"></button>
+    </div>
+</div>
+
+<script src="icons.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
