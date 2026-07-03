@@ -74,13 +74,19 @@
             <div id="dm-panel" class="panel-view">
                 <header class="channel-panel-header">
                     <h2>Личные сообщения</h2>
-                    <button id="new-dm-btn" class="icon-btn" title="Написать пользователю"></button>
                 </header>
-                <div class="dm-search-wrap">
+                <div class="friends-tabs" id="friends-tabs">
+                    <button class="friends-tab active" data-friends-tab="online">Online</button>
+                    <button class="friends-tab" data-friends-tab="all">Все</button>
+                    <button class="friends-tab" data-friends-tab="pending">Заявки</button>
+                    <button class="friends-tab" data-friends-tab="add">Добавить</button>
+                </div>
+                <div id="friends-view" class="friends-view"></div>
+                <div class="dm-search-wrap hidden" id="dm-search-wrap">
                     <span class="search-icon"></span>
                     <input type="text" id="dm-search" placeholder="Найти беседу">
                 </div>
-                <nav id="dm-list" class="dm-list"></nav>
+                <nav id="dm-list" class="dm-list hidden"></nav>
             </div>
 
             <!-- Режим сервера -->
@@ -135,6 +141,7 @@
                     <span id="dm-status-label" class="dm-status-label hidden"></span>
                 </div>
                 <div class="chat-header-actions">
+                    <button id="call-btn" class="header-btn hidden" title="Позвонить"></button>
                     <button id="pin-btn" class="header-btn" title="Закреплённые"></button>
                     <button id="members-toggle" class="header-btn" title="Участники"></button>
                     <div class="header-search-wrap">
@@ -221,7 +228,25 @@
     </div>
 </div>
 
-<script src="icons.js"></script>
-<script src="script.js"></script>
+    <!-- Модалка звонка -->
+    <div id="call-overlay" class="call-overlay hidden">
+        <div class="call-modal">
+            <div class="call-avatar-container">
+                <img id="call-avatar" src="" alt="" class="call-avatar">
+                <div class="call-status-ring"></div>
+            </div>
+            <h2 id="call-username" class="call-username">Пользователь</h2>
+            <p id="call-status-text" class="call-status-text">Звонок...</p>
+            <div class="call-actions">
+                <button id="call-mute-btn" class="call-btn call-btn-secondary" title="Выключить микрофон"></button>
+                <button id="call-end-btn" class="call-btn call-btn-danger" title="Завершить звонок"></button>
+                <button id="call-speaker-btn" class="call-btn call-btn-secondary" title="Громкая связь"></button>
+            </div>
+            <div class="call-duration" id="call-duration">00:00</div>
+        </div>
+    </div>
+
+    <script src="icons.js"></script>
+    <script src="script.js"></script>
 </body>
 </html>

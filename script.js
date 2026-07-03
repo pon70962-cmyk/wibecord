@@ -18,7 +18,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const serverPanel = document.getElementById('server-panel');
     const dmListEl = document.getElementById('dm-list');
     const dmSearch = document.getElementById('dm-search');
-    const newDmBtn = document.getElementById('new-dm-btn');
     const serverNameEl = document.getElementById('server-name');
     const serverSettingsBtn = document.getElementById('server-settings-btn');
     const channelListEl = document.getElementById('channel-list');
@@ -65,8 +64,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const settingsNavItems = document.querySelectorAll('.settings-nav-item');
     const settingsServerNav = document.getElementById('settings-server-nav');
 
+    const friendsTabsContainer = document.getElementById('friends-tabs');
+    const friendsView = document.getElementById('friends-view');
+    const dmSearchWrap = document.getElementById('dm-search-wrap');
+    const callOverlay = document.getElementById('call-overlay');
+    const callBtn = document.getElementById('call-btn');
+    const callAvatar = document.getElementById('call-avatar');
+    const callUsername = document.getElementById('call-username');
+    const callStatusText = document.getElementById('call-status-text');
+    const callDuration = document.getElementById('call-duration');
+    const callEndBtn = document.getElementById('call-end-btn');
+    const callMuteBtn = document.getElementById('call-mute-btn');
+    const callSpeakerBtn = document.getElementById('call-speaker-btn');
+
     // ===== STATE =====
     let users = JSON.parse(localStorage.getItem('wb-users') || '{}');
+    // migrate old users to have friends field
+    Object.values(users).forEach(u => {
+        if (!u.friends) u.friends = [];
+        if (!u.friendRequests) u.friendRequests = { incoming: [], outgoing: [] };
+    });
     let currentUser = null;
     let currentUsername = null;
     let servers = JSON.parse(localStorage.getItem('wb-servers') || '[]');
@@ -78,6 +95,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentUserStatus = 'online';
     let settingsSection = 'profile';
     let appSettings = JSON.parse(localStorage.getItem('wb-app-settings') || '{}');
+    let friendsTab = 'online';
+    let callActive = false;
+    let callTimer = null;
+    let callSeconds = 0;
+    let callMuted = false;
+    let callSpeaker = false;
 
     const statuses = ['online', 'idle', 'dnd', 'offline'];
     const statusLabels = { online: 'В сети', idle: 'Не активен', dnd: 'Не беспокоить', offline: 'Не в сети' };
@@ -88,7 +111,6 @@ document.addEventListener('DOMContentLoaded', () => {
         el.appendChild(icon(name, size));
     }
 
-    setIcon(document.querySelector('#new-dm-btn'), 'plus', 18);
     setIcon(serverSettingsBtn, 'settings', 18);
     setIcon(channelAddBtn, 'plus', 16);
     setIcon(voiceAddBtn, 'plus', 16);
@@ -97,6 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setIcon(logoutBtn, 'logout', 18);
     setIcon(pinBtn, 'pin', 20);
     setIcon(membersToggle, 'members', 20);
+    setIcon(callBtn, 'phone', 20);
     setIcon(attachBtn, 'attach', 20);
     setIcon(document.querySelector('.send-btn'), 'send', 20);
     setIcon(settingsClose, 'close', 18);
@@ -214,6 +237,8 @@ document.addEventListener('DOMContentLoaded', () => {
             avatar: avatarUrl(username),
             bio: '',
             status: 'online',
+            friends: [],
+            friendRequests: { incoming: [], outgoing: [] },
             createdAt: Date.now()
         };
         saveUsers();
@@ -278,6 +303,283 @@ document.addEventListener('DOMContentLoaded', () => {
 
     logoutBtn.addEventListener('click', logout);
 
+    // ===== FRIENDS SYSTEM =====
+    function getFriends() {
+        if (!currentUser) return [];
+        return currentUser.friends.map(id => getUserById(id)).filter(Boolean);
+    }
+
+    function getPendingIncoming() {
+        if (!currentUser) return [];
+        return currentUser.friendRequests.incoming.map(r => {
+            const u = getUserById(r.fromUserId);
+            return u ? { user: u, timestamp: r.timestamp } : null;
+        }).filter(Boolean);
+    }
+
+    function getPendingOutgoing() {
+        if (!currentUser) return [];
+        return currentUser.friendRequests.outgoing.map(r => {
+            const u = getUserById(r.toUserId);
+            return u ? { user: u, timestamp: r.timestamp } : null;
+        }).filter(Boolean);
+    }
+
+    function sendFriendRequest(username) {
+        const target = Object.values(users).find(u => u.username.toLowerCase() === username.toLowerCase());
+        if (!target) { showModal('Ошибка', '<p style="color:var(--text-muted)">Пользователь не найден</p>', null, 'OK'); return false; }
+        if (target.id === currentUser.id) { showModal('Ошибка', '<p style="color:var(--text-muted)">Нельзя добавить самого себя</p>', null, 'OK'); return false; }
+        if (currentUser.friends.includes(target.id)) { showModal('Ошибка', '<p style="color:var(--text-muted)">Уже в друзьях</p>', null, 'OK'); return false; }
+        if (currentUser.friendRequests.outgoing.some(r => r.toUserId === target.id)) { showModal('Ошибка', '<p style="color:var(--text-muted)">Заявка уже отправлена</p>', null, 'OK'); return false; }
+
+        currentUser.friendRequests.outgoing.push({ toUserId: target.id, timestamp: Date.now() });
+        target.friendRequests.incoming.push({ fromUserId: currentUser.id, timestamp: Date.now() });
+        users[currentUsername] = { ...currentUser };
+        users[target.username] = { ...target };
+        saveUsers();
+        renderFriendsView(friendsTab);
+        return true;
+    }
+
+    function acceptFriendRequest(userId) {
+        const req = currentUser.friendRequests.incoming.find(r => r.fromUserId === userId);
+        if (!req) return;
+        const sender = getUserById(userId);
+        if (!sender) return;
+
+        currentUser.friendRequests.incoming = currentUser.friendRequests.incoming.filter(r => r.fromUserId !== userId);
+        sender.friendRequests.outgoing = sender.friendRequests.outgoing.filter(r => r.toUserId !== currentUser.id);
+
+        if (!currentUser.friends.includes(userId)) currentUser.friends.push(userId);
+        if (!sender.friends.includes(currentUser.id)) sender.friends.push(currentUser.id);
+
+        users[currentUsername] = { ...currentUser };
+        users[sender.username] = { ...sender };
+        saveUsers();
+
+        ensureDmConversation(userId);
+        renderDmList();
+        renderFriendsView(friendsTab);
+    }
+
+    function declineFriendRequest(userId) {
+        currentUser.friendRequests.incoming = currentUser.friendRequests.incoming.filter(r => r.fromUserId !== userId);
+        const sender = getUserById(userId);
+        if (sender) {
+            sender.friendRequests.outgoing = sender.friendRequests.outgoing.filter(r => r.toUserId !== currentUser.id);
+            users[sender.username] = { ...sender };
+        }
+        users[currentUsername] = { ...currentUser };
+        saveUsers();
+        renderFriendsView(friendsTab);
+    }
+
+    function removeFriend(userId) {
+        currentUser.friends = currentUser.friends.filter(id => id !== userId);
+        const target = getUserById(userId);
+        if (target) {
+            target.friends = target.friends.filter(id => id !== currentUser.id);
+            users[target.username] = { ...target };
+        }
+        users[currentUsername] = { ...currentUser };
+        saveUsers();
+        renderFriendsView(friendsTab);
+        renderDmList();
+    }
+
+    function renderFriendsView(tab) {
+        friendsTab = tab;
+        friendsView.innerHTML = '';
+
+        document.querySelectorAll('.friends-tab').forEach(t => {
+            t.classList.toggle('active', t.dataset.friendsTab === tab);
+        });
+
+        dmSearchWrap.classList.toggle('hidden', tab !== 'all');
+        document.getElementById('dm-list').classList.toggle('hidden', tab !== 'all');
+
+        if (tab === 'add') {
+            dmSearchWrap.classList.add('hidden');
+            document.getElementById('dm-list').classList.add('hidden');
+            friendsView.innerHTML = `
+                <div class="friends-empty">
+                    <div class="empty-icon">${iconHtml('user', 40)}</div>
+                    <h3>Добавить друга</h3>
+                    <p style="margin-bottom:16px">Введите имя пользователя (username) чтобы отправить заявку</p>
+                    <div class="add-friend-input-wrap">
+                        <input class="add-friend-input" id="add-friend-input" placeholder="username" autofocus>
+                        <button class="add-friend-btn" id="add-friend-submit">Отправить заявку</button>
+                    </div>
+                    <div id="add-friend-result" style="margin-top:8px;font-size:13px"></div>
+                </div>
+            `;
+            const input = document.getElementById('add-friend-input');
+            const submitBtn = document.getElementById('add-friend-submit');
+            const result = document.getElementById('add-friend-result');
+            function doSend() {
+                const val = input.value.trim();
+                if (!val) return;
+                if (sendFriendRequest(val)) {
+                    result.style.color = 'var(--green)';
+                    result.textContent = 'Заявка отправлена!';
+                    input.value = '';
+                }
+            }
+            submitBtn.addEventListener('click', doSend);
+            input.addEventListener('keydown', e => { if (e.key === 'Enter') doSend(); });
+            setTimeout(() => input.focus(), 100);
+            return;
+        }
+
+        let items = [];
+        if (tab === 'online') {
+            items = getFriends().filter(u => (u.id === currentUser.id ? currentUserStatus : (u.status || 'online')) !== 'offline');
+        } else if (tab === 'pending') {
+            const incoming = getPendingIncoming();
+            const outgoing = getPendingOutgoing();
+            if (incoming.length === 0 && outgoing.length === 0) {
+                friendsView.innerHTML = `<div class="friends-empty"><div class="empty-icon">${iconHtml('user', 40)}</div><h3>Нет заявок</h3><p style="color:var(--text-muted)">У вас нет ожидающих заявок в друзья.</p></div>`;
+                return;
+            }
+            if (incoming.length > 0) {
+                const title = document.createElement('div');
+                title.style.cssText = 'font-size:12px;color:var(--text-muted);font-weight:600;padding:8px 4px;text-transform:uppercase;letter-spacing:0.02em';
+                title.textContent = 'Входящие заявки';
+                friendsView.appendChild(title);
+                incoming.forEach(r => {
+                    const el = document.createElement('div');
+                    el.className = 'friend-item';
+                    el.style.cursor = 'default';
+                    el.innerHTML = `
+                        <img src="${r.user.avatar}">
+                        <div class="friend-item-info">
+                            <div class="friend-item-name">${escapeHtml(r.user.username)}</div>
+                            <div class="friend-item-status">Хочет добавить вас в друзья</div>
+                        </div>
+                        <div class="friend-item-actions">
+                            <button class="friend-action-btn accept" title="Принять">${iconHtml('check', 18)}</button>
+                            <button class="friend-action-btn decline" title="Отклонить">${iconHtml('close', 18)}</button>
+                        </div>
+                    `;
+                    el.querySelector('.accept').addEventListener('click', () => acceptFriendRequest(r.user.id));
+                    el.querySelector('.decline').addEventListener('click', () => declineFriendRequest(r.user.id));
+                    friendsView.appendChild(el);
+                });
+            }
+            if (outgoing.length > 0) {
+                const title = document.createElement('div');
+                title.style.cssText = 'font-size:12px;color:var(--text-muted);font-weight:600;padding:8px 4px;text-transform:uppercase;letter-spacing:0.02em';
+                title.textContent = 'Исходящие заявки';
+                friendsView.appendChild(title);
+                outgoing.forEach(r => {
+                    const el = document.createElement('div');
+                    el.className = 'friend-item';
+                    el.style.cursor = 'default';
+                    el.innerHTML = `
+                        <img src="${r.user.avatar}">
+                        <div class="friend-item-info">
+                            <div class="friend-item-name">${escapeHtml(r.user.username)}</div>
+                            <div class="friend-item-status">Ожидание ответа</div>
+                        </div>
+                    `;
+                    friendsView.appendChild(el);
+                });
+            }
+            return;
+        } else {
+            items = getFriends();
+        }
+
+        if (items.length === 0) {
+            const label = tab === 'online' ? 'никого нет онлайн' : 'список друзей пуст';
+            friendsView.innerHTML = `<div class="friends-empty"><div class="empty-icon">${iconHtml('user', 40)}</div><h3>${tab === 'online' ? 'Нет друзей онлайн' : 'Список друзей пуст'}</h3><p style="color:var(--text-muted)">Перейдите на вкладку "Добавить", чтобы найти друзей.</p></div>`;
+            return;
+        }
+
+        items.forEach(u => {
+            const status = u.id === currentUser.id ? currentUserStatus : (u.status || 'online');
+            const el = document.createElement('div');
+            el.className = 'friend-item';
+            el.innerHTML = `
+                <img src="${u.avatar}">
+                <div class="friend-item-info">
+                    <div class="friend-item-name">${escapeHtml(u.username)}</div>
+                    <div class="friend-item-status">
+                        <span class="status-dot-inline ${status}"></span>
+                        ${statusLabels[status] || 'В сети'}
+                    </div>
+                </div>
+                <div class="friend-item-actions">
+                    <button class="friend-action-btn" title="Написать">${iconHtml('dm', 18)}</button>
+                    <button class="friend-action-btn" title="Удалить из друзей">${iconHtml('close', 18)}</button>
+                </div>
+            `;
+            el.querySelector('.friend-item-actions').children[0].addEventListener('click', e => {
+                e.stopPropagation();
+                selectDmView();
+                openDm(u.id);
+            });
+            el.querySelector('.friend-item-actions').children[1].addEventListener('click', e => {
+                e.stopPropagation();
+                removeFriend(u.id);
+            });
+            el.addEventListener('click', () => {
+                selectDmView();
+                openDm(u.id);
+            });
+            friendsView.appendChild(el);
+        });
+    }
+
+    friendsTabsContainer.addEventListener('click', e => {
+        const tab = e.target.closest('.friends-tab');
+        if (tab) renderFriendsView(tab.dataset.friendsTab);
+    });
+
+    // ===== CALL =====
+    function startCall(userId) {
+        const partner = getUserById(userId);
+        if (!partner) return;
+        callActive = true;
+        callSeconds = 0;
+        callMuted = false;
+        callSpeaker = false;
+        callOverlay.classList.remove('hidden');
+        callAvatar.src = partner.avatar;
+        callUsername.textContent = partner.username;
+        callStatusText.textContent = 'Звонок...';
+        callDuration.textContent = '00:00';
+        updateCallButtons();
+
+        if (callTimer) clearInterval(callTimer);
+        callTimer = setInterval(() => {
+            callSeconds++;
+            const m = String(Math.floor(callSeconds / 60)).padStart(2, '0');
+            const s = String(callSeconds % 60).padStart(2, '0');
+            callDuration.textContent = m + ':' + s;
+            if (callSeconds === 2) callStatusText.textContent = 'Идёт звонок';
+        }, 1000);
+    }
+
+    function endCall() {
+        callActive = false;
+        if (callTimer) { clearInterval(callTimer); callTimer = null; }
+        callOverlay.classList.add('hidden');
+    }
+
+    function updateCallButtons() {
+        callMuteBtn.innerHTML = iconHtml(callMuted ? 'mic-off' : 'mic', 22);
+        callSpeakerBtn.innerHTML = iconHtml(callSpeaker ? 'speaker' : 'phone', 22);
+    }
+
+    callEndBtn.addEventListener('click', endCall);
+    callMuteBtn.addEventListener('click', () => { callMuted = !callMuted; updateCallButtons(); });
+    callSpeakerBtn.addEventListener('click', () => { callSpeaker = !callSpeaker; updateCallButtons(); });
+
+    callBtn.addEventListener('click', () => {
+        if (viewMode === 'dm' && currentDmUserId) startCall(currentDmUserId);
+    });
+
     // ===== DEFAULT SERVER =====
     function createDefaultServer() {
         const server = {
@@ -317,7 +619,9 @@ document.addEventListener('DOMContentLoaded', () => {
         membersPanel.classList.add('hidden');
         membersToggle.classList.add('hidden');
         pinBtn.classList.add('hidden');
+        callBtn.classList.add('hidden');
         saveUIState();
+        renderFriendsView(friendsTab);
         renderDmList();
         if (!currentDmUserId && dmConversations.length > 0) {
             currentDmUserId = dmConversations[0].partnerId;
@@ -332,6 +636,7 @@ document.addEventListener('DOMContentLoaded', () => {
         dmStatusLabel.classList.add('hidden');
         messageInput.placeholder = 'Выберите беседу или начните новую';
         messageInput.disabled = true;
+        callBtn.classList.add('hidden');
         welcomeTitle.textContent = 'Личные сообщения';
         welcomeDesc.innerHTML = 'Выберите друга из списка слева или нажмите <strong>+</strong>, чтобы написать кому-нибудь.';
         setIcon(welcomeIcon, 'dm', 36);
@@ -350,6 +655,7 @@ document.addEventListener('DOMContentLoaded', () => {
         membersPanel.classList.remove('hidden');
         membersToggle.classList.remove('hidden');
         pinBtn.classList.remove('hidden');
+        callBtn.classList.add('hidden');
         messageInput.disabled = false;
 
         const server = servers.find(s => s.id === id);
@@ -395,6 +701,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const partner = getUserById(partnerId);
         if (!partner) return;
+
+        callBtn.classList.remove('hidden');
 
         chatHeaderIcon.innerHTML = `<img src="${partner.avatar}" alt="" class="dm-header-avatar">`;
         channelNameEl.textContent = partner.username;
@@ -442,31 +750,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     dmSearch.addEventListener('input', renderDmList);
 
-    newDmBtn.addEventListener('click', () => {
-        const others = Object.values(users).filter(u => u.id !== currentUser.id);
-        if (others.length === 0) {
-            showModal('Новое сообщение', '<p style="color:var(--text-muted)">Пока нет других пользователей. Зарегистрируйте второй аккаунт.</p>', null, 'OK');
-            return;
-        }
-        const list = others.map(u =>
-            `<div class="dm-pick-item" data-id="${u.id}" style="display:flex;align-items:center;gap:12px;padding:10px;border-radius:4px;cursor:pointer">
-                <img src="${u.avatar}" style="width:32px;height:32px;border-radius:50%">
-                <span>${escapeHtml(u.username)}</span>
-            </div>`
-        ).join('');
-        showModal('Новое сообщение', `<div id="dm-pick-list">${list}</div>`, null, 'Отмена');
-        modalConfirm.style.display = 'none';
-        document.querySelectorAll('.dm-pick-item').forEach(el => {
-            el.addEventListener('mouseenter', () => el.style.background = 'var(--bg-hover)');
-            el.addEventListener('mouseleave', () => el.style.background = '');
-            el.addEventListener('click', () => {
-                hideModal();
-                modalConfirm.style.display = '';
-                selectDmView();
-                openDm(el.dataset.id);
-            });
-        });
-    });
+
 
     // ===== SERVERS =====
     function renderServers() {
