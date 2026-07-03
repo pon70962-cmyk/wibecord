@@ -294,6 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
             showError(loginError, 'Неверное имя пользователя или пароль');
             return;
         }
+        fetch(API_URL + '/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: user.username, password: 'local-' + user.id, email: user.email || '' }) }).catch(() => {});
         login(username);
     });
 
@@ -513,14 +514,14 @@ document.addEventListener('DOMContentLoaded', () => {
     async function sendFriendRequest(username) {
         let target = Object.values(users).find(u => u.username.toLowerCase() === username.toLowerCase());
 
-        if (!target && serverConnected) {
+        if (!target) {
             try {
                 const res = await fetch(API_URL + '/api/user-by-name/' + encodeURIComponent(username));
                 const data = await res.json();
                 if (data.ok && data.user) {
                     const u = data.user;
                     if (!users[u.username]) {
-                        users[u.username] = { ...u, passwordHash: '', friends: [], friendRequests: { incoming: [], outgoing: [] } };
+                        users[u.username] = { ...u, passwordHash: '', friends: u.friends || [], friendRequests: u.friendRequests || { incoming: [], outgoing: [] } };
                         saveUsers();
                     }
                     target = users[u.username];
