@@ -88,9 +88,10 @@ app.get('/api/users', (req, res) => {
 });
 
 app.get('/api/user-by-name/:username', (req, res) => {
-    const u = data.users[req.params.username];
-    if (!u) return res.json({ ok: false });
-    res.json({ ok: true, user: { ...u, passwordHash: undefined } });
+    const input = req.params.username.toLowerCase();
+    const entry = Object.entries(data.users).find(([name]) => name.toLowerCase() === input);
+    if (!entry) return res.json({ ok: false });
+    res.json({ ok: true, user: { ...entry[1], passwordHash: undefined } });
 });
 
 app.get('/api/users/:id', (req, res) => {
