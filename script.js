@@ -102,6 +102,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let callMuted = false;
     let callSpeaker = false;
 
+    let ws = null;
+    let serverConnected = false;
+    const SERVER_URL = window.location.hostname === 'localhost' ? 'ws://localhost:3001' : 'wss://wibecord-api.onrender.com';
+    const API_URL = window.location.hostname === 'localhost' ? 'http://localhost:3001' : 'https://wibecord-api.onrender.com';
+
     const statuses = ['online', 'idle', 'dnd', 'offline'];
     const statusLabels = { online: 'В сети', idle: 'Не активен', dnd: 'Не беспокоить', offline: 'Не в сети' };
 
@@ -213,7 +218,7 @@ document.addEventListener('DOMContentLoaded', () => {
     switchToLogin.addEventListener('click', () => showTab('login'));
     switchToRegister.addEventListener('click', () => showTab('register'));
 
-    registerForm.addEventListener('submit', e => {
+    registerForm.addEventListener('submit', async e => {
         e.preventDefault();
         clearErrors();
 
@@ -226,33 +231,64 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!/^[a-zA-Z0-9_]+$/.test(username)) { showError(registerError, 'Имя может содержать только буквы, цифры и _'); return; }
         if (password.length < 4) { showError(registerError, 'Пароль должен быть не короче 4 символов'); return; }
         if (password !== confirm) { showError(registerError, 'Пароли не совпадают'); return; }
-        if (users[username]) { showError(registerError, 'Это имя пользователя уже занято'); return; }
 
-        users[username] = {
-            id: 'u-' + Date.now(),
-            username,
-            email: email || '',
-            passwordHash: hash(password),
-            tag: generateTag(),
-            avatar: avatarUrl(username),
-            bio: '',
-            status: 'online',
-            friends: [],
-            friendRequests: { incoming: [], outgoing: [] },
-            createdAt: Date.now()
-        };
-        saveUsers();
-        showTab('login');
-        resetForm(registerForm);
-        document.getElementById('login-username').value = username;
-        authSubtitle.textContent = 'Аккаунт создан! Теперь войдите.';
+        try {
+            const res = await fetch(API_URL + '/api/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password, email }) });
+            const data = await res.json();
+            if (data.ok) {
+                users[username] = { ...data.user, passwordHash: hash(password) };
+                saveUsers();
+                showTab('login');
+                resetForm(registerForm);
+                document.getElementById('login-username').value = username;
+                authSubtitle.textContent = 'Аккаунт создан! Теперь войдите.';
+            } else {
+                if (data.error === 'username taken') { showError(registerError, 'Это имя пользователя уже занято'); return; }
+                showError(registerError, data.error || 'Ошибка регистрации');
+            }
+        } catch (e) {
+            if (users[username]) { showError(registerError, 'Это имя пользователя уже занято'); return; }
+            users[username] = {
+                id: 'u-' + Date.now(),
+                username,
+                email: email || '',
+                passwordHash: hash(password),
+                tag: generateTag(),
+                avatar: avatarUrl(username),
+                bio: '',
+                status: 'online',
+                friends: [],
+                friendRequests: { incoming: [], outgoing: [] },
+                createdAt: Date.now()
+            };
+            saveUsers();
+            showTab('login');
+            resetForm(registerForm);
+            document.getElementById('login-username').value = username;
+            authSubtitle.textContent = 'Аккаунт создан! Теперь войдите.';
+        }
     });
 
-    loginForm.addEventListener('submit', e => {
+    loginForm.addEventListener('submit', async e => {
         e.preventDefault();
         clearErrors();
         const username = document.getElementById('login-username').value.trim();
         const password = document.getElementById('login-password').value;
+
+        try {
+            const res = await fetch(API_URL + '/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+            const data = await res.json();
+            if (data.ok) {
+                const su = data.user;
+                if (!users[username]) {
+                    users[username] = { ...su, passwordHash: hash(password), friends: [], friendRequests: { incoming: [], outgoing: [] } };
+                    saveUsers();
+                }
+                login(username);
+                return;
+            }
+        } catch (e) {}
+
         const user = users[username];
         if (!user || user.passwordHash !== hash(password)) {
             showError(loginError, 'Неверное имя пользователя или пароль');
@@ -264,8 +300,32 @@ document.addEventListener('DOMContentLoaded', () => {
     function login(username) {
         currentUsername = username;
         currentUser = users[username];
+        if (!currentUser) { localStorage.removeItem('wb-session'); return; }
         currentUserStatus = currentUser.status || 'online';
         saveSession();
+
+        fetch(API_URL + '/api/users').then(r => r.json()).then(serverUsers => {
+            if (serverUsers) {
+                Object.entries(serverUsers).forEach(([name, su]) => {
+                    if (!users[name]) {
+                        users[name] = { ...su, passwordHash: '' };
+                    } else {
+                        users[name].id = su.id;
+                        users[name].avatar = su.avatar;
+                        users[name].tag = su.tag;
+                        if (su.friends) users[name].friends = su.friends;
+                        if (su.friendRequests) users[name].friendRequests = su.friendRequests;
+                    }
+                });
+                saveUsers();
+                currentUser = users[username];
+                if (currentUser) {
+                    currentUserStatus = currentUser.status || 'online';
+                    updateUserPanel();
+                    if (viewMode === 'dm') { renderFriendsView(friendsTab); renderDmList(); }
+                }
+            }
+        }).catch(() => {});
 
         if (servers.length === 0) createDefaultServer();
 
@@ -289,9 +349,11 @@ document.addEventListener('DOMContentLoaded', () => {
         updateUserPanel();
         if (viewMode === 'dm') selectDmView();
         else selectServer(currentServerId);
+        connectServer();
     }
 
     function logout() {
+        disconnectServer();
         currentUser = null;
         currentUsername = null;
         saveSession();
@@ -302,6 +364,129 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     logoutBtn.addEventListener('click', logout);
+
+    // ===== SERVER CONNECTION =====
+    function connectServer() {
+        if (!currentUser) return;
+        try {
+            ws = new WebSocket(SERVER_URL);
+            ws.onopen = () => {
+                serverConnected = true;
+                ws.send(JSON.stringify({ type: 'auth', payload: { userId: currentUser.id, username: currentUsername } }));
+                ws.send(JSON.stringify({ type: 'get-full-data', payload: { userId: currentUser.id } }));
+            };
+            ws.onmessage = (e) => {
+                try {
+                    const msg = JSON.parse(e.data);
+                    handleServerMessage(msg);
+                } catch (err) {}
+            };
+            ws.onclose = () => { serverConnected = false; };
+            ws.onerror = () => { serverConnected = false; };
+        } catch (e) { serverConnected = false; }
+    }
+
+    function disconnectServer() {
+        if (ws) { ws.close(); ws = null; }
+        serverConnected = false;
+    }
+
+    function handleServerMessage(msg) {
+        const { type, payload } = msg;
+        if (type === 'full-data') {
+            const { friends, incoming, outgoing, users: serverUsers } = payload;
+            users = serverUsers || users;
+            if (currentUser) {
+                currentUser.friends = friends.map(f => f.id);
+                currentUser.friendRequests = { incoming: incoming.map(r => ({ fromUserId: r.user.id, timestamp: r.timestamp })), outgoing: outgoing.map(r => ({ toUserId: r.user.id, timestamp: r.timestamp })) };
+                users[currentUsername] = { ...currentUser };
+                localStorage.setItem('wb-users', JSON.stringify(users));
+                renderFriendsView(friendsTab);
+                renderDmList();
+            }
+        }
+        if (type === 'friend-request-received') {
+            const u = Object.values(users).find(x => x.id === payload.fromUserId);
+            if (!u) return;
+            currentUser.friendRequests.incoming.push({ fromUserId: payload.fromUserId, timestamp: Date.now() });
+            users[currentUsername] = { ...currentUser };
+            localStorage.setItem('wb-users', JSON.stringify(users));
+            if (friendsTab === 'pending') renderFriendsView('pending');
+        }
+        if (type === 'friend-request-sent') {
+            renderFriendsView(friendsTab);
+        }
+        if (type === 'friend-accepted') {
+            if (!currentUser.friends.includes(payload.userId)) currentUser.friends.push(payload.userId);
+            currentUser.friendRequests.outgoing = currentUser.friendRequests.outgoing.filter(r => r.toUserId !== payload.userId);
+            users[currentUsername] = { ...currentUser };
+            localStorage.setItem('wb-users', JSON.stringify(users));
+            ensureDmConversation(payload.userId);
+            renderFriendsView(friendsTab);
+            renderDmList();
+        }
+        if (type === 'friend-accepted-done') {
+            if (!currentUser.friends.includes(payload.userId)) currentUser.friends.push(payload.userId);
+            currentUser.friendRequests.incoming = currentUser.friendRequests.incoming.filter(r => r.fromUserId !== payload.userId);
+            users[currentUsername] = { ...currentUser };
+            localStorage.setItem('wb-users', JSON.stringify(users));
+            ensureDmConversation(payload.userId);
+            renderFriendsView(friendsTab);
+            renderDmList();
+        }
+        if (type === 'friend-declined-done') {
+            currentUser.friendRequests.incoming = currentUser.friendRequests.incoming.filter(r => r.fromUserId !== payload.userId);
+            users[currentUsername] = { ...currentUser };
+            localStorage.setItem('wb-users', JSON.stringify(users));
+            renderFriendsView(friendsTab);
+        }
+        if (type === 'friend-removed') {
+            currentUser.friends = currentUser.friends.filter(id => id !== payload.userId);
+            users[currentUsername] = { ...currentUser };
+            localStorage.setItem('wb-users', JSON.stringify(users));
+            renderFriendsView(friendsTab);
+            renderDmList();
+        }
+        if (type === 'friend-removed-done') {
+            currentUser.friends = currentUser.friends.filter(id => id !== payload.userId);
+            users[currentUsername] = { ...currentUser };
+            localStorage.setItem('wb-users', JSON.stringify(users));
+            renderFriendsView(friendsTab);
+            renderDmList();
+        }
+        if (type === 'new-message') {
+            const { key, message } = payload;
+            const msgs = JSON.parse(localStorage.getItem(key) || '[]');
+            msgs.push(message);
+            localStorage.setItem(key, JSON.stringify(msgs));
+            if (viewMode === 'dm') {
+                const k = `dm-${dmKey(currentUser.id, currentDmUserId)}`;
+                if (key === k) renderMessages();
+            }
+        }
+        if (type === 'messages') {
+            const { key, messages } = payload;
+            if (messages && messages.length > 0) {
+                localStorage.setItem(key, JSON.stringify(messages));
+                if (viewMode === 'dm') {
+                    const k = `dm-${dmKey(currentUser.id, currentDmUserId)}`;
+                    if (key === k) renderMessages();
+                }
+            }
+        }
+        if (type === 'incoming-call') {
+            if (confirm('Входящий звонок от ' + payload.fromUsername + '. Ответить?')) {
+                ws.send(JSON.stringify({ type: 'call-accept', payload: { toUserId: payload.fromUserId } }));
+                startCall(payload.fromUserId);
+            }
+        }
+        if (type === 'call-ended') {
+            if (callActive) { endCall(); alert('Звонок завершён'); }
+        }
+        if (type === 'call-accepted') {
+            if (callActive) { callStatusText.textContent = 'Идёт звонок'; }
+        }
+    }
 
     // ===== FRIENDS SYSTEM =====
     function getFriends() {
@@ -325,12 +510,39 @@ document.addEventListener('DOMContentLoaded', () => {
         }).filter(Boolean);
     }
 
-    function sendFriendRequest(username) {
-        const target = Object.values(users).find(u => u.username.toLowerCase() === username.toLowerCase());
+    async function sendFriendRequest(username) {
+        let target = Object.values(users).find(u => u.username.toLowerCase() === username.toLowerCase());
+
+        if (!target && serverConnected) {
+            try {
+                const res = await fetch(API_URL + '/api/user-by-name/' + encodeURIComponent(username));
+                const data = await res.json();
+                if (data.ok && data.user) {
+                    const u = data.user;
+                    if (!users[u.username]) {
+                        users[u.username] = { ...u, passwordHash: '', friends: [], friendRequests: { incoming: [], outgoing: [] } };
+                        saveUsers();
+                    }
+                    target = users[u.username];
+                }
+            } catch (e) {}
+        }
+
         if (!target) { showModal('Ошибка', '<p style="color:var(--text-muted)">Пользователь не найден</p>', null, 'OK'); return false; }
         if (target.id === currentUser.id) { showModal('Ошибка', '<p style="color:var(--text-muted)">Нельзя добавить самого себя</p>', null, 'OK'); return false; }
         if (currentUser.friends.includes(target.id)) { showModal('Ошибка', '<p style="color:var(--text-muted)">Уже в друзьях</p>', null, 'OK'); return false; }
         if (currentUser.friendRequests.outgoing.some(r => r.toUserId === target.id)) { showModal('Ошибка', '<p style="color:var(--text-muted)">Заявка уже отправлена</p>', null, 'OK'); return false; }
+
+        if (serverConnected && ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'friend-request', payload: { fromUserId: currentUser.id, toUserId: target.id, fromUsername: currentUsername } }));
+            currentUser.friendRequests.outgoing.push({ toUserId: target.id, timestamp: Date.now() });
+            target.friendRequests.incoming.push({ fromUserId: currentUser.id, timestamp: Date.now() });
+            users[currentUsername] = { ...currentUser };
+            users[target.username] = { ...target };
+            saveUsers();
+            renderFriendsView(friendsTab);
+            return true;
+        }
 
         currentUser.friendRequests.outgoing.push({ toUserId: target.id, timestamp: Date.now() });
         target.friendRequests.incoming.push({ fromUserId: currentUser.id, timestamp: Date.now() });
@@ -346,6 +558,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!req) return;
         const sender = getUserById(userId);
         if (!sender) return;
+
+        if (serverConnected && ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'accept-friend', payload: { userId: currentUser.id, senderId: userId } }));
+            currentUser.friendRequests.incoming = currentUser.friendRequests.incoming.filter(r => r.fromUserId !== userId);
+            sender.friendRequests.outgoing = sender.friendRequests.outgoing.filter(r => r.toUserId !== currentUser.id);
+            if (!currentUser.friends.includes(userId)) currentUser.friends.push(userId);
+            if (!sender.friends.includes(currentUser.id)) sender.friends.push(currentUser.id);
+            users[currentUsername] = { ...currentUser };
+            users[sender.username] = { ...sender };
+            saveUsers();
+            ensureDmConversation(userId);
+            renderDmList();
+            renderFriendsView(friendsTab);
+            return;
+        }
 
         currentUser.friendRequests.incoming = currentUser.friendRequests.incoming.filter(r => r.fromUserId !== userId);
         sender.friendRequests.outgoing = sender.friendRequests.outgoing.filter(r => r.toUserId !== currentUser.id);
@@ -363,6 +590,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function declineFriendRequest(userId) {
+        if (serverConnected && ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'decline-friend', payload: { userId: currentUser.id, senderId: userId } }));
+        }
         currentUser.friendRequests.incoming = currentUser.friendRequests.incoming.filter(r => r.fromUserId !== userId);
         const sender = getUserById(userId);
         if (sender) {
@@ -375,6 +605,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function removeFriend(userId) {
+        if (serverConnected && ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'remove-friend', payload: { userId: currentUser.id, friendId: userId } }));
+        }
         currentUser.friends = currentUser.friends.filter(id => id !== userId);
         const target = getUserById(userId);
         if (target) {
@@ -416,10 +649,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const input = document.getElementById('add-friend-input');
             const submitBtn = document.getElementById('add-friend-submit');
             const result = document.getElementById('add-friend-result');
-            function doSend() {
+            async function doSend() {
                 const val = input.value.trim();
                 if (!val) return;
-                if (sendFriendRequest(val)) {
+                if (await sendFriendRequest(val)) {
                     result.style.color = 'var(--green)';
                     result.textContent = 'Заявка отправлена!';
                     input.value = '';
@@ -551,6 +784,10 @@ document.addEventListener('DOMContentLoaded', () => {
         callDuration.textContent = '00:00';
         updateCallButtons();
 
+        if (serverConnected && ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'call', payload: { toUserId: userId, fromUserId: currentUser.id, fromUsername: currentUser.username, fromAvatar: currentUser.avatar, callType: 'audio' } }));
+        }
+
         if (callTimer) clearInterval(callTimer);
         callTimer = setInterval(() => {
             callSeconds++;
@@ -562,6 +799,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function endCall() {
+        if (callActive && serverConnected && ws && ws.readyState === 1 && currentDmUserId) {
+            ws.send(JSON.stringify({ type: 'call-end', payload: { toUserId: currentDmUserId } }));
+        }
         callActive = false;
         if (callTimer) { clearInterval(callTimer); callTimer = null; }
         callOverlay.classList.add('hidden');
@@ -894,7 +1134,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function loadMessages() {
-        return JSON.parse(localStorage.getItem(getMessagesKey()) || '[]');
+        const key = getMessagesKey();
+        if (viewMode === 'dm' && serverConnected && ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'get-messages', payload: { key } }));
+        }
+        return JSON.parse(localStorage.getItem(key) || '[]');
     }
 
     function saveMessages(msgs) {
@@ -977,15 +1221,36 @@ document.addEventListener('DOMContentLoaded', () => {
         if (viewMode === 'dm' && !currentDmUserId) return;
         if (viewMode === 'server' && (!currentServerId || !currentChannelId)) return;
 
-        const msgs = loadMessages();
-        msgs.push({
-            id: 'msg-' + Date.now(),
+        const msgObj = {
+            id: 'msg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
             content: content.trim(),
             timestamp: Date.now(),
             userId: currentUser.id,
             username: currentUser.username,
             avatar: currentUser.avatar
-        });
+        };
+
+        if (viewMode === 'dm' && serverConnected && ws && ws.readyState === 1) {
+            const key = getMessagesKey();
+            ws.send(JSON.stringify({ type: 'message', payload: { fromUserId: currentUser.id, toUserId: currentDmUserId, content: content.trim(), key, fromUsername: currentUser.username, fromAvatar: currentUser.avatar } }));
+            const msgs = loadMessages();
+            msgs.push(msgObj);
+            saveMessages(msgs);
+            if (viewMode === 'dm') {
+                const conv = dmConversations.find(d => d.partnerId === currentDmUserId);
+                if (conv) {
+                    conv.lastMessage = content.trim().slice(0, 50);
+                    conv.lastTime = Date.now();
+                    saveDms();
+                    renderDmList();
+                }
+            }
+            renderMessages();
+            return;
+        }
+
+        const msgs = loadMessages();
+        msgs.push(msgObj);
         saveMessages(msgs);
 
         if (viewMode === 'dm') {
