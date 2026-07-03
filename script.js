@@ -457,8 +457,8 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="friend-item-status">Хочет добавить вас в друзья</div>
                         </div>
                         <div class="friend-item-actions">
-                            <button class="friend-action-btn accept" title="Принять">${iconHtml('check', 18)}</button>
-                            <button class="friend-action-btn decline" title="Отклонить">${iconHtml('close', 18)}</button>
+                            <button class="friend-action-btn accept" title="Принять"><span style="font-size:18px;font-weight:700;line-height:1">✓</span></button>
+                            <button class="friend-action-btn decline" title="Отклонить"><span style="font-size:18px;font-weight:700;line-height:1">✕</span></button>
                         </div>
                     `;
                     el.querySelector('.accept').addEventListener('click', () => acceptFriendRequest(r.user.id));
@@ -510,16 +510,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </div>
                 <div class="friend-item-actions">
-                    <button class="friend-action-btn" title="Написать">${iconHtml('dm', 18)}</button>
-                    <button class="friend-action-btn" title="Удалить из друзей">${iconHtml('close', 18)}</button>
+                    <button class="friend-action-btn" title="Написать"><span style="font-size:16px;font-weight:600;line-height:1">✉</span></button>
+                    <button class="friend-action-btn remove-friend" title="Удалить из друзей"><span style="font-size:16px;font-weight:600;line-height:1">✕</span></button>
                 </div>
             `;
-            el.querySelector('.friend-item-actions').children[0].addEventListener('click', e => {
+            el.querySelector('.friend-item-actions .friend-action-btn:first-child').addEventListener('click', e => {
                 e.stopPropagation();
                 selectDmView();
                 openDm(u.id);
             });
-            el.querySelector('.friend-item-actions').children[1].addEventListener('click', e => {
+            el.querySelector('.friend-item-actions .remove-friend').addEventListener('click', e => {
                 e.stopPropagation();
                 removeFriend(u.id);
             });
