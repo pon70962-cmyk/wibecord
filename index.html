@@ -228,19 +228,42 @@
     </div>
 </div>
 
+    <!-- Модалка входящего звонка -->
+    <div id="incoming-call" class="incoming-call hidden">
+        <div class="incoming-call-content">
+            <div class="incoming-call-avatar-wrap">
+                <img id="incoming-avatar" src="" alt="" class="incoming-call-avatar">
+                <div class="incoming-ring"></div>
+            </div>
+            <h2 id="incoming-username" class="incoming-call-name">Пользователь</h2>
+            <p class="incoming-call-label">Входящий звонок</p>
+            <div class="incoming-call-actions">
+                <button id="incoming-decline" class="call-btn call-btn-danger" title="Отклонить"></button>
+                <button id="incoming-accept" class="call-btn call-btn-accept" title="Ответить"></button>
+            </div>
+        </div>
+    </div>
+
     <!-- Модалка звонка -->
     <div id="call-overlay" class="call-overlay hidden">
-        <div class="call-modal">
-            <div class="call-avatar-container">
-                <img id="call-avatar" src="" alt="" class="call-avatar">
-                <div class="call-status-ring"></div>
+        <div class="call-container">
+            <div class="call-videos" id="call-videos" style="display:none">
+                <video id="remote-video" class="call-video remote-video" autoplay playsinline></video>
+                <video id="local-video" class="call-video local-video" autoplay playsinline muted></video>
             </div>
-            <h2 id="call-username" class="call-username">Пользователь</h2>
-            <p id="call-status-text" class="call-status-text">Звонок...</p>
+            <div class="call-main" id="call-main">
+                <div class="call-avatar-wrap">
+                    <img id="call-avatar" src="" alt="" class="call-avatar-img">
+                    <div class="call-status-ring"></div>
+                </div>
+                <h2 id="call-username" class="call-username">Пользователь</h2>
+                <p id="call-status-text" class="call-status-text">Звонок...</p>
+            </div>
             <div class="call-actions">
                 <button id="call-mute-btn" class="call-btn call-btn-secondary" title="Выключить микрофон"></button>
+                <button id="call-screen-btn" class="call-btn call-btn-secondary hidden" title="Демонстрация экрана"></button>
                 <button id="call-end-btn" class="call-btn call-btn-danger" title="Завершить звонок"></button>
-                <button id="call-speaker-btn" class="call-btn call-btn-secondary" title="Громкая связь"></button>
+                <button id="call-speaker-btn" class="call-btn call-btn-secondary hidden" title="Громкая связь"></button>
             </div>
             <div class="call-duration" id="call-duration">00:00</div>
         </div>

@@ -76,6 +76,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const callEndBtn = document.getElementById('call-end-btn');
     const callMuteBtn = document.getElementById('call-mute-btn');
     const callSpeakerBtn = document.getElementById('call-speaker-btn');
+    const callScreenBtn = document.getElementById('call-screen-btn');
+    const callVideos = document.getElementById('call-videos');
+    const callMain = document.getElementById('call-main');
+    const remoteVideo = document.getElementById('remote-video');
+    const localVideo = document.getElementById('local-video');
+    const incomingCall = document.getElementById('incoming-call');
+    const incomingAvatar = document.getElementById('incoming-avatar');
+    const incomingUsername = document.getElementById('incoming-username');
+    const incomingDecline = document.getElementById('incoming-decline');
+    const incomingAccept = document.getElementById('incoming-accept');
 
     // ===== STATE =====
     let users = JSON.parse(localStorage.getItem('wb-users') || '{}');
@@ -101,6 +111,12 @@ document.addEventListener('DOMContentLoaded', () => {
     let callSeconds = 0;
     let callMuted = false;
     let callSpeaker = false;
+    let pc = null;
+    let localStream = null;
+    let screenStream = null;
+    let screenSharing = false;
+    let callState = 'idle';
+    let incomingCallerId = null;
 
     let ws = null;
     let serverConnected = false;
@@ -125,6 +141,11 @@ document.addEventListener('DOMContentLoaded', () => {
     setIcon(pinBtn, 'pin', 20);
     setIcon(membersToggle, 'members', 20);
     setIcon(callBtn, 'phone', 20);
+    setIcon(callMuteBtn, 'mic', 22);
+    setIcon(callScreenBtn, 'monitor', 22);
+    setIcon(callEndBtn, 'phone', 22);
+    setIcon(incomingAccept, 'phone', 24);
+    setIcon(incomingDecline, 'close', 24);
     setIcon(attachBtn, 'attach', 20);
     setIcon(document.querySelector('.send-btn'), 'send', 20);
     setIcon(settingsClose, 'close', 18);
@@ -476,16 +497,39 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         }
         if (type === 'incoming-call') {
-            if (confirm('Входящий звонок от ' + payload.fromUsername + '. Ответить?')) {
-                ws.send(JSON.stringify({ type: 'call-accept', payload: { toUserId: payload.fromUserId } }));
-                startCall(payload.fromUserId);
+            if (callState === 'idle') {
+                showIncomingCall(payload.fromUserId, payload.fromUsername, payload.fromAvatar);
             }
         }
         if (type === 'call-ended') {
-            if (callActive) { endCall(); alert('Звонок завершён'); }
+            if (callState !== 'idle') { endCall(); }
         }
         if (type === 'call-accepted') {
-            if (callActive) { callStatusText.textContent = 'Идёт звонок'; }
+            if (callState === 'outgoing') {
+                callState = 'active';
+                callStatusText.textContent = 'Соединение...';
+                callScreenBtn.classList.remove('hidden');
+                (async () => {
+                    try {
+                        pc = createPeerConnection();
+                        pc._targetId = currentDmUserId;
+                        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                        localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
+                        const offer = await pc.createOffer();
+                        await pc.setLocalDescription(offer);
+                        if (serverConnected && ws && ws.readyState === 1) {
+                            ws.send(JSON.stringify({ type: 'signal', payload: { toUserId: currentDmUserId, signal: { type: 'offer', sdp: offer.sdp } } }));
+                        }
+                        callStatusText.textContent = 'Идёт звонок';
+                    } catch (e) {
+                        callStatusText.textContent = 'Ошибка соединения';
+                        setTimeout(endCall, 2000);
+                    }
+                })();
+            }
+        }
+        if (type === 'signal') {
+            handleSignal(payload.fromUserId, payload.signal);
         }
     }
 
@@ -691,8 +735,8 @@ document.addEventListener('DOMContentLoaded', () => {
                             <div class="friend-item-status">Хочет добавить вас в друзья</div>
                         </div>
                         <div class="friend-item-actions">
-                            <button class="friend-action-btn accept" title="Принять"><span style="font-size:18px;font-weight:700;line-height:1">✓</span></button>
-                            <button class="friend-action-btn decline" title="Отклонить"><span style="font-size:18px;font-weight:700;line-height:1">✕</span></button>
+                            <button class="friend-action-btn accept" title="Принять">${iconHtml('check', 18)}</button>
+                            <button class="friend-action-btn decline" title="Отклонить">${iconHtml('close', 18)}</button>
                         </div>
                     `;
                     el.querySelector('.accept').addEventListener('click', () => acceptFriendRequest(r.user.id));
@@ -744,8 +788,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </div>
                 <div class="friend-item-actions">
-                    <button class="friend-action-btn" title="Написать"><span style="font-size:16px;font-weight:600;line-height:1">✉</span></button>
-                    <button class="friend-action-btn remove-friend" title="Удалить из друзей"><span style="font-size:16px;font-weight:600;line-height:1">✕</span></button>
+                    <button class="friend-action-btn" title="Написать">${iconHtml('dm', 16)}</button>
+                    <button class="friend-action-btn remove-friend" title="Удалить из друзей">${iconHtml('close', 16)}</button>
                 </div>
             `;
             el.querySelector('.friend-item-actions .friend-action-btn:first-child').addEventListener('click', e => {
@@ -770,19 +814,64 @@ document.addEventListener('DOMContentLoaded', () => {
         if (tab) renderFriendsView(tab.dataset.friendsTab);
     });
 
-    // ===== CALL =====
-    function startCall(userId) {
+    // ===== WEBRTC HELPERS =====
+    function createPeerConnection() {
+        if (pc) { pc.close(); pc = null; }
+        pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        });
+        pc.onicecandidate = (e) => {
+            if (e.candidate && callState === 'active') {
+                const target = callState === 'active' ? (pc._targetId || currentDmUserId) : null;
+                if (target && serverConnected && ws && ws.readyState === 1) {
+                    ws.send(JSON.stringify({ type: 'signal', payload: { toUserId: target, signal: { type: 'ice-candidate', candidate: e.candidate.toJSON() } } }));
+                }
+            }
+        };
+        pc.ontrack = (e) => {
+            if (e.track.kind === 'video') {
+                remoteVideo.srcObject = e.streams[0] || new MediaStream([e.track]);
+                callVideos.style.display = 'block';
+                callMain.style.display = 'none';
+                remoteVideo.play().catch(() => {});
+            } else if (e.track.kind === 'audio') {
+                const audio = document.createElement('audio');
+                audio.srcObject = e.streams[0] || new MediaStream([e.track]);
+                audio.autoplay = true;
+                audio.hidden = true;
+                document.body.appendChild(audio);
+                audio.play().catch(() => {});
+            }
+        };
+        pc.onconnectionstatechange = () => {
+            if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+                endCall();
+            }
+        };
+        return pc;
+    }
+
+    async function startCall(userId) {
         const partner = getUserById(userId);
         if (!partner) return;
+        if (callState !== 'idle') return;
+        callState = 'outgoing';
         callActive = true;
         callSeconds = 0;
         callMuted = false;
         callSpeaker = false;
+        screenSharing = false;
         callOverlay.classList.remove('hidden');
+        callMain.style.display = 'block';
+        callVideos.style.display = 'none';
         callAvatar.src = partner.avatar;
         callUsername.textContent = partner.username;
         callStatusText.textContent = 'Звонок...';
         callDuration.textContent = '00:00';
+        callScreenBtn.classList.add('hidden');
         updateCallButtons();
 
         if (serverConnected && ws && ws.readyState === 1) {
@@ -795,30 +884,219 @@ document.addEventListener('DOMContentLoaded', () => {
             const m = String(Math.floor(callSeconds / 60)).padStart(2, '0');
             const s = String(callSeconds % 60).padStart(2, '0');
             callDuration.textContent = m + ':' + s;
-            if (callSeconds === 2) callStatusText.textContent = 'Идёт звонок';
+            if (callSeconds === 2 && callState === 'outgoing') callStatusText.textContent = 'Ожидание ответа...';
         }, 1000);
     }
 
-    function endCall() {
-        if (callActive && serverConnected && ws && ws.readyState === 1 && currentDmUserId) {
-            ws.send(JSON.stringify({ type: 'call-end', payload: { toUserId: currentDmUserId } }));
+    async function answerCall(fromUserId) {
+        if (callState !== 'idle') return;
+        callState = 'active';
+        callActive = true;
+        callSeconds = 0;
+        callMuted = false;
+        callSpeaker = false;
+        screenSharing = false;
+        callOverlay.classList.remove('hidden');
+        callMain.style.display = 'block';
+        callVideos.style.display = 'none';
+        const partner = getUserById(fromUserId);
+        if (partner) {
+            callAvatar.src = partner.avatar;
+            callUsername.textContent = partner.username;
         }
+        callStatusText.textContent = 'Соединение...';
+        callDuration.textContent = '00:00';
+        callScreenBtn.classList.remove('hidden');
+        updateCallButtons();
+
+        if (callTimer) clearInterval(callTimer);
+        callTimer = setInterval(() => {
+            callSeconds++;
+            const m = String(Math.floor(callSeconds / 60)).padStart(2, '0');
+            const s = String(callSeconds % 60).padStart(2, '0');
+            callDuration.textContent = m + ':' + s;
+        }, 1000);
+
+        try {
+            pc = createPeerConnection();
+            pc._targetId = fromUserId;
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
+            callStatusText.textContent = 'Ожидание сигнала...';
+        } catch (e) {
+            callStatusText.textContent = 'Ошибка доступа к микрофону';
+            setTimeout(endCall, 2000);
+        }
+    }
+
+    async function handleSignal(fromUserId, signal) {
+        if (signal.type === 'offer') {
+            if (!pc) {
+                pc = createPeerConnection();
+                pc._targetId = fromUserId;
+                try {
+                    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                    localStream.getAudioTracks().forEach(t => pc.addTrack(t, localStream));
+                } catch (e) {}
+            }
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: signal.sdp }));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                if (serverConnected && ws && ws.readyState === 1) {
+                    ws.send(JSON.stringify({ type: 'signal', payload: { toUserId: fromUserId, signal: { type: 'answer', sdp: answer.sdp } } }));
+                }
+                if (callState === 'idle') callState = 'active';
+                callStatusText.textContent = 'Идёт звонок';
+                callScreenBtn.classList.remove('hidden');
+            } catch (e) {}
+        }
+
+        if (signal.type === 'answer') {
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: signal.sdp }));
+                if (callState !== 'active') {
+                    callState = 'active';
+                    callStatusText.textContent = 'Идёт звонок';
+                    callScreenBtn.classList.remove('hidden');
+                }
+            } catch (e) {}
+        }
+
+        if (signal.type === 'ice-candidate' && signal.candidate) {
+            try {
+                await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+            } catch (e) {}
+        }
+    }
+
+    function toggleMute() {
+        callMuted = !callMuted;
+        if (localStream) {
+            localStream.getAudioTracks().forEach(t => { t.enabled = !callMuted; });
+        }
+        updateCallButtons();
+    }
+
+    async function toggleScreenShare() {
+        if (screenSharing) {
+            if (screenStream) {
+                screenStream.getTracks().forEach(t => t.stop());
+                screenStream = null;
+            }
+            if (pc) {
+                const senders = pc.getSenders();
+                senders.forEach(s => {
+                    if (s.track && s.track.kind === 'video') pc.removeTrack(s);
+                });
+            }
+            screenSharing = false;
+            localVideo.srcObject = null;
+            localVideo.style.display = 'none';
+            updateCallButtons();
+            if (pc && callState === 'active') {
+                try {
+                    const offer = await pc.createOffer({ iceRestart: true });
+                    await pc.setLocalDescription(offer);
+                    if (serverConnected && ws && ws.readyState === 1) {
+                        ws.send(JSON.stringify({ type: 'signal', payload: { toUserId: pc._targetId, signal: { type: 'offer', sdp: offer.sdp } } }));
+                    }
+                } catch (e) {}
+            }
+        } else {
+            try {
+                screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+                screenStream.getVideoTracks()[0].addEventListener('ended', () => {
+                    toggleScreenShare();
+                });
+                if (pc) {
+                    screenStream.getVideoTracks().forEach(t => pc.addTrack(t, screenStream));
+                }
+                screenSharing = true;
+                localVideo.srcObject = screenStream;
+                localVideo.style.display = 'block';
+                localVideo.play().catch(() => {});
+                updateCallButtons();
+                if (pc && callState === 'active') {
+                    const offer = await pc.createOffer({ iceRestart: true });
+                    await pc.setLocalDescription(offer);
+                    if (serverConnected && ws && ws.readyState === 1) {
+                        ws.send(JSON.stringify({ type: 'signal', payload: { toUserId: pc._targetId, signal: { type: 'offer', sdp: offer.sdp } } }));
+                    }
+                }
+            } catch (e) {}
+        }
+    }
+
+    function endCall() {
+        if (callActive && serverConnected && ws && ws.readyState === 1) {
+            const target = pc?._targetId || currentDmUserId;
+            if (target) {
+                ws.send(JSON.stringify({ type: 'call-end', payload: { toUserId: target } }));
+            }
+        }
+        if (pc) { pc.close(); pc = null; }
+        if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+        if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
+        screenSharing = false;
         callActive = false;
+        callState = 'idle';
+        incomingCallerId = null;
         if (callTimer) { clearInterval(callTimer); callTimer = null; }
         callOverlay.classList.add('hidden');
+        remoteVideo.srcObject = null;
+        localVideo.srcObject = null;
+        localVideo.style.display = 'none';
+        callVideos.style.display = 'none';
+        callMain.style.display = 'block';
+        document.querySelectorAll('audio[hidden]').forEach(el => el.remove());
+    }
+
+    function showIncomingCall(fromUserId, fromUsername, fromAvatar) {
+        incomingCallerId = fromUserId;
+        incomingAvatar.src = fromAvatar || avatarUrl(fromUsername);
+        incomingUsername.textContent = fromUsername;
+        incomingCall.classList.remove('hidden');
+    }
+
+    function hideIncomingCall() {
+        incomingCall.classList.add('hidden');
+        incomingCallerId = null;
     }
 
     function updateCallButtons() {
         callMuteBtn.innerHTML = iconHtml(callMuted ? 'mic-off' : 'mic', 22);
-        callSpeakerBtn.innerHTML = iconHtml(callSpeaker ? 'speaker' : 'phone', 22);
+        callScreenBtn.innerHTML = iconHtml(screenSharing ? 'close' : 'monitor', 22);
     }
 
     callEndBtn.addEventListener('click', endCall);
-    callMuteBtn.addEventListener('click', () => { callMuted = !callMuted; updateCallButtons(); });
-    callSpeakerBtn.addEventListener('click', () => { callSpeaker = !callSpeaker; updateCallButtons(); });
+    callMuteBtn.addEventListener('click', toggleMute);
+    callScreenBtn.addEventListener('click', toggleScreenShare);
 
-    callBtn.addEventListener('click', () => {
-        if (viewMode === 'dm' && currentDmUserId) startCall(currentDmUserId);
+    incomingAccept.addEventListener('click', async () => {
+        const id = incomingCallerId;
+        hideIncomingCall();
+        if (id && serverConnected && ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'call-accept', payload: { toUserId: id } }));
+            await answerCall(id);
+            const partner = getUserById(id);
+            if (partner) {
+                callStatusText.textContent = 'Ожидание сигнала...';
+            }
+        }
+    });
+
+    incomingDecline.addEventListener('click', () => {
+        if (incomingCallerId && serverConnected && ws && ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: 'call-end', payload: { toUserId: incomingCallerId } }));
+        }
+        hideIncomingCall();
+    });
+
+    callBtn.addEventListener('click', async () => {
+        if (viewMode === 'dm' && currentDmUserId && callState === 'idle') {
+            await startCall(currentDmUserId);
+        }
     });
 
     // ===== DEFAULT SERVER =====

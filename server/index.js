@@ -333,6 +333,15 @@ wss.on('connection', (ws) => {
                 }
                 return;
             }
+
+            if (type === 'signal') {
+                const { toUserId, signal } = payload;
+                const targetClient = clients.get(toUserId);
+                if (targetClient && targetClient.readyState === 1) {
+                    targetClient.send(JSON.stringify({ type: 'signal', payload: { fromUserId: userId, signal } }));
+                }
+                return;
+            }
         } catch (e) { console.error('ws msg error', e); }
     });
 
